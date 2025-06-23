@@ -25,3 +25,12 @@ class ScheduleEntry(models.Model):
 
     def __str__(self):
         return f"{self.date} {self.time_slot}"
+
+
+class ReflectionNote(models.Model):
+    date = models.DateField(unique=True)
+    content = models.TextField(blank=True)
+
+    def __str__(self):
+        return f"{self.date} 筆記"
+
