@@ -1,23 +1,13 @@
 import json
-from datetime import datetime,time, timedelta
+from datetime import datetime
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.timezone import now
-from .models import Task, TimeSlot, ScheduleEntry, ReflectionNote
-from datetime import datetime as dt  # 確保有引入
+from .models import Task, TimeSlot, ScheduleEntry, ReflectionNote, FixedTask, FixedTaskStatus
 
 def home(request):
     today = now().date()
-    
-     # 自動搬移未完成的昨天任務（只做一次）
-    yesterday = today - timedelta(days=1)
-    if not Task.objects.filter(date=today).exists():  # 只在今日尚未建立任何任務時才搬
-        yesterday_unfinished = Task.objects.filter(date=yesterday, completed=False)
-        for task in yesterday_unfinished:
-            Task.objects.create(title=task.title, date=today)
-
-    # 判斷是否有選取日期（預設為今天）
     date_str = request.GET.get('date') or request.POST.get('date')
     if date_str:
         try:
@@ -26,18 +16,11 @@ def home(request):
             selected_date = today
     else:
         selected_date = today
-        
-    # ✅ 自動搬移昨日未完成任務（僅在 today == selected_date 時觸發一次）
-    if selected_date == today and not request.GET.get('skip_migrate'):
-        yesterday = today - timedelta(days=1)
-        yesterday_tasks = Task.objects.filter(date=yesterday, completed=False)
-        for task in yesterday_tasks:
-            if not Task.objects.filter(title=task.title, date=today).exists():
-                Task.objects.create(title=task.title, date=today, completed=False)
 
     timeslots = TimeSlot.objects.all().order_by('hour', 'minute')
-    tasks = Task.objects.filter(date=selected_date)
+    tasks = Task.objects.filter(date=selected_date).order_by('-id')
 
+    # 處理 POST 新任務與排程儲存
     if request.method == "POST":
         new_task = request.POST.get('new_task')
         if new_task:
@@ -53,29 +36,20 @@ def home(request):
                 entry.save()
         return redirect(f"/?date={selected_date.isoformat()}")
 
-    entry_dict = {entry.time_slot.id: entry for entry in ScheduleEntry.objects.filter(date=selected_date)}
+    entry_dict = {e.time_slot.id: e for e in ScheduleEntry.objects.filter(date=selected_date)}
 
-    # 顯示時間字串（例如 08:30）
-    for i, t in enumerate(timeslots):
-        t.display_time = f"{t.hour:02d}:{t.minute:02d}"
-        t.start_str = t.display_time
-    if i + 1 < len(timeslots):
-        next_slot = timeslots[i + 1]
-        t.end_str = f"{next_slot.hour:02d}:{next_slot.minute:02d}"
-    else:
-        t.end_str = "23:59"
-        
+    # 顯示時間格式
     for t in timeslots:
         t.display_time = f"{t.hour:02d}:{t.minute:02d}"
         t.start_str = f"{t.hour:02d}:{t.minute:02d}"
-        end_hour = t.hour
-        end_minute = t.minute + 59
-        if end_minute >= 60:
-            end_hour += end_minute // 60
-            end_minute = end_minute % 60
-        t.end_str = f"{end_hour:02d}:{end_minute:02d}"
+        t.end_str = f"{t.hour:02d}:{(t.minute + 59) % 60:02d}"
 
-
+    # 固定任務狀態 per date
+    fixed_tasks_with_status = []
+    for ft in FixedTask.objects.all():
+        status = FixedTaskStatus.objects.filter(task=ft, date=selected_date).first()
+        ft.completed = status.completed if status else False
+        fixed_tasks_with_status.append(ft)
 
     reflection_note = ReflectionNote.objects.filter(date=selected_date).first()
     reflection = reflection_note.content if reflection_note else ""
@@ -86,7 +60,7 @@ def home(request):
         "tasks": tasks,
         "entry_dict": entry_dict,
         "reflection": reflection,
-        "now_hour": dt.now().hour,  # 新增這行
+        "fixed_tasks": fixed_tasks_with_status,
     })
 
 @csrf_exempt
@@ -100,12 +74,11 @@ def autosave(request):
 
         try:
             date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        except ValueError:
-            return JsonResponse({"status": "error", "message": "Invalid date"}, status=400)
+            time_slot = get_object_or_404(TimeSlot, pk=time_slot_id)
+        except Exception:
+            return JsonResponse({"status": "error", "message": "Invalid date or time slot"}, status=400)
 
-        time_slot = get_object_or_404(TimeSlot, pk=time_slot_id)
         entry, _ = ScheduleEntry.objects.get_or_create(date=date, time_slot=time_slot)
-
         if field == "planned":
             entry.planned = value
         elif field == "actual":
@@ -115,8 +88,7 @@ def autosave(request):
 
         entry.save()
         return JsonResponse({"status": "ok"})
-
-    return JsonResponse({"status": "error", "message": "Invalid request"}, status=400)
+    return JsonResponse({"status": "error", "message": "Only POST allowed"}, status=405)
 
 @csrf_exempt
 def autosave_reflection(request):
@@ -135,44 +107,51 @@ def autosave_reflection(request):
         note.save()
 
         return JsonResponse({'status': 'ok'})
-
     return JsonResponse({'status': 'error', 'message': 'Invalid method'}, status=400)
+
+@csrf_exempt
+def toggle_task_completed(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        task_id = data.get('task_id')
+        completed = data.get('completed', False)
+        try:
+            task = Task.objects.get(pk=task_id)
+            task.completed = completed
+            task.save()
+            return JsonResponse({'status': 'ok'})
+        except Task.DoesNotExist:
+            return JsonResponse({'status': 'error', 'message': 'Task not found'}, status=404)
+    return JsonResponse({'status': 'error', 'message': 'Only POST allowed'}, status=405)
+
+@csrf_exempt
+def toggle_fixed_task(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        task_id = data.get('task_id')
+        completed = data.get('completed', False)
+        date_str = data.get('date')
+        try:
+            task = FixedTask.objects.get(pk=task_id)
+            date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except (FixedTask.DoesNotExist, ValueError):
+            return JsonResponse({'status': 'error', 'message': 'Invalid task or date'}, status=400)
+
+        status, _ = FixedTaskStatus.objects.get_or_create(task=task, date=date)
+        status.completed = completed
+        status.save()
+        return JsonResponse({'status': 'ok'})
+    return JsonResponse({'status': 'error', 'message': 'Only POST allowed'}, status=405)
 
 def edit_task(request, task_id):
     task = get_object_or_404(Task, pk=task_id)
     if request.method == "POST":
-        task.title = request.POST.get("title", task.title)
+        task.title = request.POST.get("updated_title", task.title)
         task.save()
         return redirect("home")
-    return render(request, "schedule/edit_task.html", {"task": task})
+    return render(request, "edit_task.html", {"task": task})
 
 def delete_task(request, task_id):
     task = get_object_or_404(Task, pk=task_id)
     task.delete()
     return redirect("home")
-
-def generate_timeslots(start="06:00", end="23:00", interval=30):
-    times = []
-    current = datetime.strptime(start, "%H:%M")
-    end_time = datetime.strptime(end, "%H:%M")
-    while current < end_time:
-        times.append((current.hour, current.minute))
-        current += timedelta(minutes=interval)
-    return times
-
-@csrf_exempt
-def toggle_task_completed(request):
-    if request.method == "POST":
-        try:
-            data = json.loads(request.body)
-            task_id = data.get("task_id")
-            completed = data.get("completed", False)
-            task = Task.objects.get(id=task_id)
-            task.completed = completed
-            task.save()
-            return JsonResponse({"status": "ok"})
-        except Task.DoesNotExist:
-            return JsonResponse({"status": "error", "message": "Task not found"}, status=404)
-        except Exception as e:
-            return JsonResponse({"status": "error", "message": str(e)}, status=400)
-    return JsonResponse({"status": "error", "message": "Invalid request"}, status=400)

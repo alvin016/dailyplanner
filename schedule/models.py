@@ -1,4 +1,22 @@
 from django.db import models
+from django.contrib.auth.models import User  # 若有登入系統
+
+# 每天的固定任務
+class FixedTask(models.Model):
+    title = models.CharField(max_length=100)
+   
+    def __str__(self):
+        return self.title
+    
+
+
+class FixedTaskStatus(models.Model):
+    date = models.DateField()
+    task = models.ForeignKey(FixedTask, on_delete=models.CASCADE)
+    completed = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = ('date', 'task')
 
 # 每天的任務項目
 class Task(models.Model):
