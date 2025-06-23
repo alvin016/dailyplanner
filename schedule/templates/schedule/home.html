@@ -72,6 +72,18 @@
     .table-light {
       background-color: #f1f3f5;
     }
+    .table-warning {
+      background-color: #fff3cd !important;
+      border-left: 4px solid #ffa500;
+    }
+    .table-secondary.text-muted {
+      background-color: #e9ecef !important;
+      color: #6c757d !important;
+    }
+    .drop-hover {
+      border: 2px dashed #0d6efd;
+      background-color: #e7f1ff;
+    }
     @media (max-width: 991px) {
       .timeline table {
         display: block;
@@ -147,11 +159,12 @@
         </div>
       </div>
     </div>
-    <div class="col-12 col-md-8 timeline py-4 px-4">
+
+     <div class="col-12 col-md-8 timeline py-4 px-4">
       <div class="d-flex justify-content-between align-items-center mb-4">
         <h3>📅 {{ today|date:"Y 年 m 月 d 日" }} 的排程</h3>
         <form method="get">
-          <input type="date" name="date" value="{{ today }}" class="form-control" onchange="this.form.submit()">
+          <input type="date" name="date" value="{{ today|date:'Y-m-d' }}" class="form-control" onchange="this.form.submit()">
         </form>
       </div>
       <form method="post">
@@ -167,13 +180,20 @@
           <tbody>
             {% for time in timeslots %}
               {% with entry=entry_dict|get_item:time.id %}
-              <tr>
+              <tr class="time-slot-row" data-start="{{ time.start_str }}" data-end="{{ time.end_str }}">
                 <td data-label="時間">{{ time.display_time }}</td>
                 <td data-label="預定">
-                  <input type="text" name="planned_{{ time.id }}" class="form-control" value="{{ entry.planned|default_if_none:'' }}" onblur="autoSave(this, 'planned', {{ time.id }}, '{{ today }}')" ondragover="event.preventDefault()" ondrop="onDrop(event, this, {{ time.id }}, '{{ today }}')">
+                  <input type="text" name="planned_{{ time.id }}" class="form-control"
+                         value="{{ entry.planned|default_if_none:'' }}"
+                         onblur="autoSave(this, 'planned', {{ time.id }}, '{{ today }}')"
+                         ondragover="onDragOverInput(event)"
+                         ondragleave="onDragLeaveInput(event)"
+                         ondrop="onDrop(event, this, {{ time.id }}, '{{ today }}')">
                 </td>
                 <td data-label="實際">
-                  <input type="text" name="actual_{{ time.id }}" class="form-control" value="{{ entry.actual|default_if_none:'' }}" onblur="autoSave(this, 'actual', {{ time.id }}, '{{ today }}')">
+                  <input type="text" name="actual_{{ time.id }}" class="form-control"
+                         value="{{ entry.actual|default_if_none:'' }}"
+                         onblur="autoSave(this, 'actual', {{ time.id }}, '{{ today }}')">
                 </td>
               </tr>
               {% endwith %}
@@ -219,7 +239,6 @@ function saveReflection() {
       'X-CSRFToken': getCSRFToken()
     },
     body: JSON.stringify({ date: '{{ today|date:"Y-m-d" }}', content: textarea.value })
-
   })
   .then(response => response.json())
   .then(data => {
@@ -248,6 +267,32 @@ function onDrop(event, input, timeSlotId, date) {
   input.value = taskText;
   autoSave(input, 'planned', timeSlotId, date);
 }
+function highlightCurrentSlot() {
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  document.querySelectorAll(".time-slot-row").forEach(row => {
+    const start = row.getAttribute("data-start");
+    const end = row.getAttribute("data-end");
+    if (!start || !end) return;
+    const [sh, sm] = start.split(":" ).map(Number);
+    const [eh, em] = end.split(":" ).map(Number);
+    const startMin = sh * 60 + sm;
+    const endMin = eh * 60 + em;
+    if (nowMinutes >= startMin && nowMinutes < endMin) {
+      row.classList.add("table-warning");
+      row.classList.remove("table-secondary", "text-muted");
+    } else if (nowMinutes >= endMin) {
+      row.classList.add("table-secondary", "text-muted");
+      row.classList.remove("table-warning");
+    } else {
+      row.classList.remove("table-warning", "table-secondary", "text-muted");
+    }
+  });
+}
+window.addEventListener('DOMContentLoaded', () => {
+  highlightCurrentSlot();
+  setInterval(highlightCurrentSlot, 60000);
+});
 </script>
 </body>
 </html>

@@ -1,10 +1,11 @@
 import json
-from datetime import datetime
+from datetime import datetime,time, timedelta
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.timezone import now
 from .models import Task, TimeSlot, ScheduleEntry, ReflectionNote
+from datetime import datetime as dt  # 確保有引入
 
 def home(request):
     today = now().date()
@@ -40,8 +41,26 @@ def home(request):
     entry_dict = {entry.time_slot.id: entry for entry in ScheduleEntry.objects.filter(date=selected_date)}
 
     # 顯示時間字串（例如 08:30）
+    for i, t in enumerate(timeslots):
+        t.display_time = f"{t.hour:02d}:{t.minute:02d}"
+        t.start_str = t.display_time
+    if i + 1 < len(timeslots):
+        next_slot = timeslots[i + 1]
+        t.end_str = f"{next_slot.hour:02d}:{next_slot.minute:02d}"
+    else:
+        t.end_str = "23:59"
+        
     for t in timeslots:
         t.display_time = f"{t.hour:02d}:{t.minute:02d}"
+        t.start_str = f"{t.hour:02d}:{t.minute:02d}"
+        end_hour = t.hour
+        end_minute = t.minute + 59
+        if end_minute >= 60:
+            end_hour += end_minute // 60
+            end_minute = end_minute % 60
+        t.end_str = f"{end_hour:02d}:{end_minute:02d}"
+
+
 
     reflection_note = ReflectionNote.objects.filter(date=selected_date).first()
     reflection = reflection_note.content if reflection_note else ""
@@ -52,6 +71,7 @@ def home(request):
         "tasks": tasks,
         "entry_dict": entry_dict,
         "reflection": reflection,
+        "now_hour": dt.now().hour,  # 新增這行
     })
 
 @csrf_exempt
@@ -109,9 +129,18 @@ def edit_task(request, task_id):
         task.title = request.POST.get("title", task.title)
         task.save()
         return redirect("home")
-    return render(request, "edit_task.html", {"task": task})
+    return render(request, "schedule/edit_task.html", {"task": task})
 
 def delete_task(request, task_id):
     task = get_object_or_404(Task, pk=task_id)
     task.delete()
     return redirect("home")
+
+def generate_timeslots(start="06:00", end="23:00", interval=30):
+    times = []
+    current = datetime.strptime(start, "%H:%M")
+    end_time = datetime.strptime(end, "%H:%M")
+    while current < end_time:
+        times.append((current.hour, current.minute))
+        current += timedelta(minutes=interval)
+    return times
