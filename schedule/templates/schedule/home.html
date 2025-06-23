@@ -65,6 +65,10 @@
     .btn-outline-danger:hover {
       background-color: #f8d7da;
     }
+    .form-check-input:checked + label {
+      text-decoration: line-through;
+      color: gray;
+    }
     .table {
       background-color: #ffffff;
       color: #212529;
@@ -138,7 +142,10 @@
       <ul id="taskList" class="list-group list-group-flush">
         {% for task in tasks %}
           <li class="list-group-item d-flex justify-content-between align-items-center">
-            <span draggable="true" ondragstart="onDragStart(event)" data-task="{{ task.title }}">{{ task.title }}</span>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" onchange="toggleTaskCompleted({{ task.id }}, this.checked)" {% if task.completed %}checked{% endif %}>
+              <label class="form-check-label ms-2">{{ task.title }}</label>
+            </div>
             <span>
               <a href="{% url 'edit_task' task.id %}" class="btn btn-sm btn-outline-secondary">✏️</a>
               <a href="{% url 'delete_task' task.id %}" class="btn btn-sm btn-outline-danger">🗑️</a>
@@ -227,6 +234,16 @@ function autoSave(input, field, timeSlotId, date) {
         input.classList.remove('border', 'border-success');
       }, 1000);
     }
+  });
+}
+function toggleTaskCompleted(taskId, completed) {
+  fetch('/toggle_task_completed/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': getCSRFToken()
+    },
+    body: JSON.stringify({ task_id: taskId, completed: completed })
   });
 }
 function saveReflection() {

@@ -9,6 +9,13 @@ from datetime import datetime as dt  # 確保有引入
 
 def home(request):
     today = now().date()
+    
+     # 自動搬移未完成的昨天任務（只做一次）
+    yesterday = today - timedelta(days=1)
+    if not Task.objects.filter(date=today).exists():  # 只在今日尚未建立任何任務時才搬
+        yesterday_unfinished = Task.objects.filter(date=yesterday, completed=False)
+        for task in yesterday_unfinished:
+            Task.objects.create(title=task.title, date=today)
 
     # 判斷是否有選取日期（預設為今天）
     date_str = request.GET.get('date') or request.POST.get('date')
@@ -19,6 +26,14 @@ def home(request):
             selected_date = today
     else:
         selected_date = today
+        
+    # ✅ 自動搬移昨日未完成任務（僅在 today == selected_date 時觸發一次）
+    if selected_date == today and not request.GET.get('skip_migrate'):
+        yesterday = today - timedelta(days=1)
+        yesterday_tasks = Task.objects.filter(date=yesterday, completed=False)
+        for task in yesterday_tasks:
+            if not Task.objects.filter(title=task.title, date=today).exists():
+                Task.objects.create(title=task.title, date=today, completed=False)
 
     timeslots = TimeSlot.objects.all().order_by('hour', 'minute')
     tasks = Task.objects.filter(date=selected_date)
@@ -144,3 +159,20 @@ def generate_timeslots(start="06:00", end="23:00", interval=30):
         times.append((current.hour, current.minute))
         current += timedelta(minutes=interval)
     return times
+
+@csrf_exempt
+def toggle_task_completed(request):
+    if request.method == "POST":
+        try:
+            data = json.loads(request.body)
+            task_id = data.get("task_id")
+            completed = data.get("completed", False)
+            task = Task.objects.get(id=task_id)
+            task.completed = completed
+            task.save()
+            return JsonResponse({"status": "ok"})
+        except Task.DoesNotExist:
+            return JsonResponse({"status": "error", "message": "Task not found"}, status=404)
+        except Exception as e:
+            return JsonResponse({"status": "error", "message": str(e)}, status=400)
+    return JsonResponse({"status": "error", "message": "Invalid request"}, status=400)
